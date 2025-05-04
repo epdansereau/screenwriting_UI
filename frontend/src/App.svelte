@@ -1,6 +1,7 @@
 <script>
   import { onMount, tick } from 'svelte';
   import { writable, get } from 'svelte/store';
+  import { Screenplay } from './screenplay.js';
 
   let screenplay = null;
   let file;
@@ -25,44 +26,45 @@
   }
 
   function handleExport(type) {
-    console.log(`📦 Exporting as ${type}`);
+    if (!screenplay) return alert('Upload or create a screenplay first!');
+
+    let content = '';
+    let mime    = 'text/plain';
+    let name    = '';
+
+    switch (type) {
+      case 'fdx':
+        content = screenplay.toFdx();
+        mime    = 'application/xml';
+        name    = 'screenplay.fdx';
+        break;
+      case 'txt':
+        content = screenplay.toText(false, true);         // no layout
+        name    = 'screenplay.txt';
+        break;
+      case 'txt-layout':
+        content = screenplay.toText(true, true);          // with layout
+        name    = 'screenplay_layout.txt';
+        break;
+      case 'json':
+        content = screenplay.toJson();
+        mime    = 'application/json';
+        name    = 'screenplay.json';
+        break;
+      default:
+        return alert('Unknown export type');
+    }
+
+    // Trigger download
+    const blob = new Blob([content], { type: mime });
+    const url  = URL.createObjectURL(blob);
+    const a    = Object.assign(document.createElement('a'), { href: url, download: name });
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
     exportMenuOpen = false;
-
-    const extensionMap = {
-      fdx: 'fdx',
-      txt: 'txt',
-      'txt-layout': 'txt',
-      json: 'json'
-    };
-
-    const filenameMap = {
-      fdx: 'screenplay.fdx',
-      txt: 'screenplay.txt',
-      'txt-layout': 'screenplay_layout.txt',
-      json: 'screenplay.json'
-    };
-
-    fetch(`http://localhost:8000/export?type=${type}`)
-      .then(response => {
-        if (!response.ok) throw new Error("Failed to export file");
-        return response.blob();
-      })
-      .then(blob => {
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = filenameMap[type] || `screenplay.${extensionMap[type] || 'txt'}`;
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-        URL.revokeObjectURL(url);
-      })
-      .catch(err => {
-        console.error("❌ Export failed:", err);
-        alert("Failed to export screenplay.");
-      });
   }
-
 
   function handleClickOutsideExport(event) {
     if (exportMenuOpen && !exportRef?.contains(event.target)) {
@@ -84,18 +86,23 @@
     });
   }
 
+  // Markdown display is not supported yet
+  function textOf(para) {
+    return (para.text_elements || []).map(te => te.text).join('');
+  }
+
   function storeRef(node, { key, para }) {
     if (!node) return;
     elementRefs[key] = node;
-    if (node.innerText.trim() === '' && para.text_elements[0]?.text) {
-      node.innerText = para.type === 'Scene Heading'
-        ? para.text_elements[0].text.toUpperCase()
-        : para.text_elements[0].text;
+
+    // Populate initial text if empty
+    if (node.innerText.trim() === '') {
+      const full = textOf(para);
+      node.innerText = para.type === 'Scene Heading' ? full.toUpperCase() : full;
     }
+
     return {
-      destroy() {
-        delete elementRefs[key];
-      }
+      destroy() { delete elementRefs[key]; }
     };
   }
 
@@ -103,14 +110,13 @@
     for (const scene of screenplay.scenes) {
       const para = scene.paragraphs.find(p => p.id === id);
       if (para) {
-        const current = para.text_elements[0]?.text ?? '';
-        if (newText !== current) {
-          para.text_elements[0].text = newText;
+        if (newText !== textOf(para)) {
+          // Replace the whole array with a single plain TextElement
+          para.text_elements = [{ text: newText, style: null }];
         }
         return;
       }
     }
-    console.warn(`❌ Could not find paragraph with id ${id}`);
   }
 
   function syncAllVisibleText() {
@@ -131,14 +137,21 @@
   }
 
   async function upload() {
-    const form = new FormData();
-    form.append('file', file);
-    const res = await fetch('http://localhost:8000/upload', {
-      method: 'POST',
-      body: form
-    });
-    screenplay = await res.json();
-    ensureParagraphIds();
+    if (!file) return alert('Choose a file first!');
+    const ext = file.name.split('.').pop().toLowerCase();
+    const text = await file.text();                 // FileReader under the hood
+
+    try {
+      if (ext === 'fdx') {
+        screenplay = Screenplay.fromFdx(text);
+      } else {
+        screenplay = Screenplay.fromPlain(text, { markdown: true });
+      }
+      ensureParagraphIds();
+    } catch (err) {
+      console.error('❌ Parse error:', err);
+      alert('Could not parse screenplay.');
+    }
   }
 
   function scrollToScene(index) {
