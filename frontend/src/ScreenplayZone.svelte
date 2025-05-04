@@ -1,6 +1,7 @@
 <script>
   import { onMount, tick } from 'svelte';
   import { writable, get } from 'svelte/store';
+  import { Screenplay }   from './screenplay.js';
 
   /* Two‑way bound screenplay from parent */
   export let screenplay = null;
@@ -123,8 +124,69 @@
       const { sceneIndex, paraIndex } = get(menuState);
       changeType(sceneIndex, paraIndex, t);
       e.preventDefault();
+    }    
+  }
+function handlePaste(e, sceneIdx, paraIdx, para) {
+  const pasted = e.clipboardData?.getData('text/plain') ?? '';
+  if (!pasted.includes('\n')) return;                // single line → native paste
+  e.preventDefault();
+
+  /* ── split the current paragraph at the caret ──────────────────── */
+  const sel   = window.getSelection();
+  const caret = sel && sel.anchorOffset != null ? sel.anchorOffset : 0;
+  const original = para.text_elements[0]?.text ?? '';
+  const before   = original.slice(0, caret);
+  const after    = original.slice(caret);
+
+  /* ── first pasted line stays in current paragraph ──────────────── */
+  const allLines  = pasted.replace(/\r/g, '').split('\n');
+  const firstLine = allLines.shift();
+
+  const newCurrent = before + firstLine;
+  para.text_elements = [{ text: newCurrent, style: null }];
+  elementRefs[`p-${sceneIdx}-${paraIdx}`].innerText = newCurrent;
+
+  /* ── EACH remaining line becomes its own parsed paragraph(s) ───── */
+  const remainingLines = allLines.map(l => l.trimEnd());
+  const newParas = remainingLines.length
+    ? paragraphsFromLines(remainingLines)   // ← parses character / dialogue correctly
+    : [];
+
+  /* ── append any text that was after the caret ──────────────────── */
+  if (after) {
+    if (newParas.length) {
+      newParas[newParas.length - 1].text_elements.push({ text: after, style: null });
+    } else {
+      newParas.push({
+        id: generateId(),
+        type: para.type,
+        text_elements: [{ text: after, style: null }]
+      });
     }
   }
+
+  /* ── insert the new paragraphs right after the current one ─────── */
+  if (newParas.length) {
+    const scene = screenplay.scenes[sceneIdx];
+    scene.paragraphs.splice(paraIdx + 1, 0, ...newParas);
+    screenplay = screenplay;
+  }
+
+  /* ── place caret at start of the first newly inserted paragraph ── */
+  tick().then(() => {
+    const targetEl = document.getElementById(`p-${sceneIdx}-${paraIdx + 1}`);
+    if (targetEl) {
+      const range = document.createRange();
+      range.setStart(targetEl.childNodes[0] || targetEl, 0);
+      range.collapse(true);
+      const s = window.getSelection();
+      s.removeAllRanges();
+      s.addRange(range);
+      targetEl.focus();
+    }
+  });
+}
+
 
   onMount(() => {
     document.addEventListener('click', handleClickOutside);
@@ -134,6 +196,29 @@
       document.removeEventListener('keydown', handleKeydown);
     };
   });
+
+/* turn raw lines into plain‑object paragraphs using screenplay.js */
+function paragraphsFromLines(lines) {
+  /* keep each pasted line separate → cleanSpacing:false */
+  const temp = Screenplay.fromPlain(
+    lines.join('\n'),
+    { markdown: true, allowFountain: true, cleanSpacing: false, cleanPaging: false }
+  );
+
+  const out = [];
+  temp.scenes.forEach(s =>
+    s.paragraphs.forEach(p =>
+      out.push({
+        id:            generateId(),
+        type:          p.type,
+        text_elements: p.text_elements.map(te => ({ text: te.text, style: te.style ?? null }))
+      })
+    )
+  );
+  return out;
+}
+
+
 </script>
 
 <!-- ───── DESK + PAGE WRAPPER (no assumptions about layout) ─────────── -->
@@ -166,110 +251,192 @@
                   contenteditable
                   on:input={(e) => updateTextById(para.id, e.target.innerText)}
 
+on:keydown={(e) => {
+  const el   = e.currentTarget;
+  const full = el.innerText;          /* raw text including spaces     */
+  const txt  = full.trim();           /* quick “is this blank?” check  */
 
-                on:keydown={(e) => {
-                const el   = e.currentTarget;
-                const full = el.innerText;          /* raw text including spaces     */
-                const txt  = full.trim();           /* quick “is this blank?” check  */
+  /* ──────────────────────────  ENTER  ────────────────────────────── */
+  if (e.key === 'Enter') {
+    e.preventDefault();
 
-                /* ─── ENTER ──────────────────────────────────────────────────────── */
-                if (e.key === 'Enter') {
-                    e.preventDefault();
+    const sel   = window.getSelection();
+    const caret = sel && sel.anchorOffset != null ? sel.anchorOffset : full.length;
 
-                    const sel   = window.getSelection();
-                    const caret = sel && sel.anchorOffset != null ? sel.anchorOffset : full.length;
+    /* (1) empty element → open type menu */
+    if (txt === '') {
+      toggleMenu(i, j);
+      return;
+    }
 
-                    /* (1) EMPTY element → open type‑menu */
-                    if (txt === '') {
-                    toggleMenu(i, j);
-                    return;
-                    }
+    /* (2) caret at end → insert blank paragraph (default‑after rules) */
+    if (caret === full.length) {
+      insertEmptyParagraph(i, j);
+      return;
+    }
 
-                    /* (2) caret at end → default behaviour (new blank paragraph) */
-                    if (caret === full.length) {
-                    insertEmptyParagraph(i, j);
-                    return;
-                    }
+    /* (3) caret mid‑text → split paragraph, keep SAME type ---------- */
+    const before = full.slice(0, caret);
+    const after  = full.slice(caret);
 
-                    /* (3) caret mid‑text → split & keep SAME paragraph type ------ */
-                    const before = full.slice(0, caret);
-                    const after  = full.slice(caret);
+    syncAllVisibleText();
+    const scene = screenplay.scenes[i];
 
-                    syncAllVisibleText();
-                    const scene = screenplay.scenes[i];
+    /* update current paragraph */
+    scene.paragraphs[j].text_elements = [{ text: before, style: null }];
+    el.innerText = before;                         /* update DOM now    */
 
-                    /* update current paragraph’s text */
-                    scene.paragraphs[j].text_elements = [{ text: before, style: null }];
-                    el.innerText = before;                     /* update DOM immediately */
+    /* new paragraph with identical type */
+    scene.paragraphs.splice(j + 1, 0, {
+      id: generateId(),
+      type: para.type,
+      text_elements: [{ text: after, style: null }]
+    });
+    screenplay = screenplay;
 
-                    /* create the new paragraph with IDENTICAL type */
-                    scene.paragraphs.splice(j + 1, 0, {
-                    id: generateId(),
-                    type: para.type,                         /*  ← keep same type  */
-                    text_elements: [{ text: after, style: null }]
-                    });
-                    screenplay = screenplay;
+    tick().then(() => {
+      const newEl = document.getElementById(`p-${i}-${j + 1}`);
+      if (newEl) {
+        const r = document.createRange();
+        r.setStart(newEl.childNodes[0] || newEl, 0);  /* caret at start */
+        r.collapse(true);
+        const s = window.getSelection();
+        s.removeAllRanges();
+        s.addRange(r);
+        newEl.focus();
+      }
+    });
+  }
 
-                    tick().then(() => {
-                    const newEl = document.getElementById(`p-${i}-${j + 1}`);
-                    if (newEl) {
-                        /* place caret at start of the new paragraph */
-                        const range = document.createRange();
-                        range.setStart(newEl.childNodes[0] || newEl, 0);
-                        range.collapse(true);
-                        const s = window.getSelection();
-                        s.removeAllRanges();
-                        s.addRange(range);
-                        newEl.focus();
-                    }
-                    });
-                }
+  /* ───────────────────────────  TAB  ─────────────────────────────── */
+  else if (e.key === 'Tab') {
+    e.preventDefault();
 
-                /* ─── TAB ────────────────────────────────────────────────────────── */
-                else if (e.key === 'Tab') {
-                    e.preventDefault();
+    if (txt === '') {
+      /* cycle current paragraph type */
+      para.type = getTabCycleType(para.type);
+      screenplay = screenplay;
+    } else {
+      /* insert paragraph using tab‑insert rules */
+      syncAllVisibleText();
+      const scene = screenplay.scenes[i];
+      scene.paragraphs.splice(j + 1, 0, {
+        id: generateId(),
+        type: getTabInsertType(para.type),
+        text_elements: [{ text: '', style: null }]
+      });
+      screenplay = screenplay;
+      tick().then(() => document.getElementById(`p-${i}-${j + 1}`)?.focus());
+    }
+  }
 
-                    if (txt === '') {
-                    /* cycle current paragraph type */
-                    para.type = getTabCycleType(para.type);
-                    screenplay = screenplay;
-                    } else {
-                    /* insert a new paragraph using tab‑insert rules */
-                    syncAllVisibleText();
-                    const scene = screenplay.scenes[i];
-                    scene.paragraphs.splice(j + 1, 0, {
-                        id: generateId(),
-                        type: getTabInsertType(para.type),
-                        text_elements: [{ text: '', style: null }]
-                    });
-                    screenplay = screenplay;
-                    tick().then(() => document.getElementById(`p-${i}-${j + 1}`)?.focus());
-                    }
-                }
+  /* ──────────────────────  BACKSPACE on empty  ───────────────────── */
+  else if (e.key === 'Backspace' && txt === '') {
+    if (j === 0) return;               /* never delete 1st para in scene */
+    e.preventDefault();
 
-                /* ─── BACKSPACE (delete empty paragraph) ─────────────────────────── */
-                else if (e.key === 'Backspace' && txt === '') {
-                    if (j === 0) return;          /* never delete first paragraph in scene */
-                    e.preventDefault();
+    syncAllVisibleText();
+    screenplay.scenes[i].paragraphs.splice(j, 1);
+    screenplay = screenplay;
 
-                    syncAllVisibleText();
-                    screenplay.scenes[i].paragraphs.splice(j, 1);
-                    screenplay = screenplay;
+    tick().then(() => {
+      const prev = document.getElementById(`p-${i}-${j - 1}`);
+      if (prev) {
+        const r = document.createRange();
+        r.selectNodeContents(prev);
+        r.collapse(false);             /* caret at end of previous para  */
+        const s = window.getSelection();
+        s.removeAllRanges();
+        s.addRange(r);
+        prev.focus();
+      }
+    });
+  }
 
-                    tick().then(() => {
-                    const prev = document.getElementById(`p-${i}-${j - 1}`);
-                    if (prev) {
-                        const rng = document.createRange();
-                        rng.selectNodeContents(prev);
-                        rng.collapse(false);
-                        const s = window.getSelection();
-                        s.removeAllRanges();
-                        s.addRange(rng);
-                        prev.focus();
-                    }
-                    });
-                }
-                }}
+  /* ────────────────────────  ARROW UP / DOWN  ────────────────────── */
+  else if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+    /* helper: caret rectangle & line position */
+    function caretInfo() {
+      const sel = window.getSelection();
+      if (!sel.rangeCount) return null;
+      const range     = sel.getRangeAt(0).cloneRange();
+      const rects     = range.getClientRects();
+      const caretRect = rects[0];                 /* first rect of caret */
+      if (!caretRect) return null;
+      const elRect = el.getBoundingClientRect();
+      return {
+        caretX: caretRect.left,
+        atFirst: Math.abs(caretRect.top - elRect.top) < 2,
+        atLast:  Math.abs(caretRect.bottom - elRect.bottom) < 2
+      };
+    }
+
+    const info = caretInfo();
+    if (!info) return;  /* fallback to native behaviour */
+
+    /* util: move caret to a given (x, y) inside targetEl */
+    function placeCaretAt(targetEl, x, y) {
+      const pos = document.caretPositionFromPoint
+        ? document.caretPositionFromPoint(x, y)
+        : document.caretRangeFromPoint
+          ? document.caretRangeFromPoint(x, y)
+          : null;
+
+      if (pos) {
+        const r = document.createRange();
+        if ('offsetNode' in pos) {          /* CaretPosition */
+          r.setStart(pos.offsetNode, pos.offset);
+        } else {                            /* Range from caretRangeFromPoint */
+          r.setStart(pos.startContainer, pos.startOffset);
+        }
+        r.collapse(true);
+        const s = window.getSelection();
+        s.removeAllRanges();
+        s.addRange(r);
+      }
+      targetEl.focus();
+    }
+
+    /* move UP if caret on first line */
+    if (e.key === 'ArrowUp' && info.atFirst) {
+      e.preventDefault();
+      let targetEl = null;
+
+      if (j > 0) {
+        targetEl = document.getElementById(`p-${i}-${j - 1}`);
+      } else if (i > 0) {
+        const prevScene = screenplay.scenes[i - 1];
+        const prevIdx   = prevScene.paragraphs.length - 1;
+        targetEl = document.getElementById(`p-${i - 1}-${prevIdx}`);
+      }
+
+      if (targetEl) {
+        const trgRect = targetEl.getBoundingClientRect();
+        placeCaretAt(targetEl, info.caretX, trgRect.bottom - 2);  /* near end line */
+      }
+    }
+
+    /* move DOWN if caret on last line */
+    if (e.key === 'ArrowDown' && info.atLast) {
+      e.preventDefault();
+      let targetEl = null;
+
+      const scene = screenplay.scenes[i];
+      if (j < scene.paragraphs.length - 1) {
+        targetEl = document.getElementById(`p-${i}-${j + 1}`);
+      } else if (i < screenplay.scenes.length - 1) {
+        targetEl = document.getElementById(`p-${i + 1}-0`);
+      }
+
+      if (targetEl) {
+        const trgRect = targetEl.getBoundingClientRect();
+        placeCaretAt(targetEl, info.caretX, trgRect.top + 2);     /* near first line */
+      }
+    }
+  }
+}}
+
+                on:paste={e => handlePaste(e, i, j, para)}  
 
 
 
