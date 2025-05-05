@@ -26,8 +26,7 @@
     if(!node) return;
     elementRefs[key]=node;
     if(node.innerText.trim()===''){
-      const full=textOf(para);
-      node.innerText = para.type==='Scene Heading'? full.toUpperCase(): full;
+      node.innerText = renderText(para); 
     }
     return{destroy(){delete elementRefs[key];}};
   }
@@ -223,10 +222,7 @@ if (e.key === 'Backspace' && txt !== '') {
     /* update prev DOM */
     const prevEl = elementRefs[`p-${i}-${j - 1}`];
     if (prevEl) {
-      const show = prev.type === 'Scene Heading'
-        ? prev.text_elements.map(te => te.text).join('').toUpperCase()
-        : prev.text_elements.map(te => te.text).join('');
-      prevEl.innerText = show;
+      prevEl.innerText = renderText(prev);
     }
 
     /* remove current paragraph */
@@ -358,6 +354,23 @@ function placeCaretAtOffset(el, offset) {
   /* fallback */
   placeCaretAtEnd(el);
 }
+function renderText(para) {
+  const raw = para.text_elements.map(te => te.text).join('');
+  return (para.type === 'Scene Heading' || para.type === 'Character')
+    ? raw.toUpperCase()
+    : raw;
+}
+function handleInput(e, para) {
+  if (para.type === 'Character') {
+    // force current text to uppercase in the DOM
+    const sel = window.getSelection();      // remember caret
+    const offset = sel.anchorOffset;
+    e.target.innerText = e.target.innerText.toUpperCase();
+    // restore caret (end of text is fine)
+    placeCaretAtEnd(e.target);
+  }
+  updateTextById(para.id, e.target.innerText);
+}
 
 </script>
 
@@ -388,7 +401,7 @@ function placeCaretAtOffset(el, offset) {
                 <div id={`p-${i}-${j}`} data-id={para.id}
                      use:storeRef={{key:`p-${i}-${j}`, para}}
                      class={`editable ${para.type.toLowerCase().replace(/\s+/g,'-')}`}
-                     on:input={e=>updateTextById(para.id,e.target.innerText)}>
+                     on:input={e => handleInput(e, para)}>
                 </div>
               </div>
 
