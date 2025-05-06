@@ -6,6 +6,15 @@
   /* ───── PUBLIC PROP (two‑way bound) ─────────────────────────────── */
   export let screenplay = null;
 
+  /* make the first element focusable from the parent component */
+  export function focusFirstElement () {
+    // wait until the DOM has the first paragraph
+    tick().then(() => {
+      const el = document.getElementById('p-0-0');
+      if (el) placeCaretAtStart(el);
+    });
+  }
+
   /* ───── INTERNAL STATE ──────────────────────────────────────────── */
   const menuState   = writable({ open:false, sceneIndex:null, paraIndex:null });
   const elementRefs = {};
@@ -74,20 +83,6 @@
     if (newEl) placeCaretAtStart(newEl);
   }
 
-  async function insertAtEnd(){
-    if(!screenplay?.scenes.length) return;
-    syncAllVisibleText();
-    const si=screenplay.scenes.length-1, sc=screenplay.scenes[si];
-    sc.paragraphs.push({
-      id:generateId(), type:getDefaultType(sc.paragraphs.at(-1).type),
-      text_elements:[{text:'',style:null}]
-    });
-    screenplay=screenplay;
-    await tick();
-    const lastEl = document.getElementById(`p-${si}-${sc.paragraphs.length-1}`)
-    if (lastEl) placeCaretAtStart(lastEl);
-  }
-
   /* ───── MENU ────────────────────────────────────────────────────── */
   const toggleMenu=(i,j)=>menuState.update(ms=>
     ms.open&&ms.sceneIndex===i&&ms.paraIndex===j
@@ -115,6 +110,10 @@
   onMount(()=>{
     document.addEventListener('click',handleClickOutside);
     document.addEventListener('keydown',handleGlobalKeydown);
+
+    /* focus first element when the component mounts */
+    focusFirstElement();
+
     return()=>{document.removeEventListener('click',handleClickOutside);
                document.removeEventListener('keydown',handleGlobalKeydown);};
   });
@@ -413,7 +412,6 @@ function handleInput(e, para) {
           {/each}
         </div>
       {/each}
-      <div class="bottom-space" on:click={insertAtEnd}>+ Add element</div>
     {/if}
   </div>
 </div>
@@ -421,10 +419,17 @@ function handleInput(e, para) {
 <style>
   :root { --paper-bg:#fff; --desk-bg:#d83a3a; }
   .desk { width:100%; min-height:100vh; background:var(--desk-bg); }
-  .page { width:61ch; padding:6rem 7rem; background:var(--paper-bg);
-          border:1px solid #ddd; box-shadow:0 2px 8px rgba(0,0,0,0.15); }
+  .page {
+        width: 61ch;
+        padding: 6rem 7rem;               /* top/bottom = 6rem, sides = 7rem */
+        background: var(--paper-bg);
+        border: 1px solid #ddd;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+        min-height: calc(1em * 51 + 12rem); /* 51 lines + 6rem top + 6rem bottom */
+    }
   * { font-family:'Courier New',monospace; line-height:1; }
 
+  /* paragraph type styles (unchanged) */
   .scene-heading{ font-weight:bold; margin-top:1rem; text-align:left; }
   .character    { margin-left:20ch; font-weight:bold; text-transform:uppercase; text-align:left; }
   .parenthetical{ margin-left:14ch; font-style:italic; text-align:left; }
@@ -448,13 +453,5 @@ function handleInput(e, para) {
   .type-option:hover{ background:#eee; }
 
   .editable   { width:100%; outline:none; white-space:pre-wrap; }
-  .bottom-space{
-    height:100px; border-top:1px dashed #ccc; margin-top:2rem;
-    text-align:center; cursor:pointer; color:gray;
-  }
-    .menu,
-    .type-menu {
-    user-select: none;        /* can’t highlight or copy */
-    -webkit-user-select: none;
-    }
+  /* .bottom-space – styles kept for now but element removed */
 </style>

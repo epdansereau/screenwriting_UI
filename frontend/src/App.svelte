@@ -4,7 +4,8 @@
 
   /*  UI state  */
   let file;
-  let screenplay = null;
+  let screenplay = Screenplay.fromPlain('INT. ', { markdown: true });
+
 
   /*  EXPORT MENU ------------------------------------------------------ */
   let exportMenuOpen = false;
