@@ -453,5 +453,9 @@ function handleInput(e, para) {
   .type-option:hover{ background:#eee; }
 
   .editable   { width:100%; outline:none; white-space:pre-wrap; }
-  /* .bottom-space – styles kept for now but element removed */
+    .menu,
+     .type-menu {
+     user-select: none;        /* can’t highlight or copy */
+     -webkit-user-select: none;
+     }
 </style>
