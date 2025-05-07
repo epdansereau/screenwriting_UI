@@ -295,11 +295,22 @@ if (e.key === 'Backspace' && txt !== '') {
     const node=(sel.anchorNode instanceof Element? sel.anchorNode : sel.anchorNode?.parentElement);
     return node?.closest?.('.editable[data-id]');
   };
-  function delegateKeydown(e){
+function delegateKeydown(e){
+    /* ——— first, handle a selection that spans multiple paragraphs ——— */
+    const selInfo = multiParaSelection();
+    if (selInfo) {
+        const printable = e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey;
+        if (e.key === 'Backspace' || e.key === 'Delete' || printable) {
+        handleMultiParaEdit(e, selInfo);
+        return;                                   // done – nothing else to do
+        }
+    }
+
+    /* ——— otherwise fall back to the existing per‑paragraph logic ——— */
     const el=currentParaEl(); if(!el) return;
     const [,si,pj]=/p-(\d+)-(\d+)/.exec(el.id)||[]; if(si==null) return;
     handleEditKeydown(e,+si,+pj, screenplay.scenes[+si].paragraphs[+pj], el);
-  }
+ }
   function delegatePaste(e){
     const el=currentParaEl(); if(!el) return;
     const [,si,pj]=/p-(\d+)-(\d+)/.exec(el.id)||[]; if(si==null) return;
@@ -371,6 +382,96 @@ function handleInput(e, para) {
   }
   updateTextById(para.id, e.target.innerText);
 }
+
+/* ─── multi‑paragraph selection helpers ─────────────────────────── */
+
+/* absolute character offset of (node, offset) inside paragraph <el> */
+function caretOffsetIn(el, node, offset) {
+  const r = document.createRange();
+  r.setStart(el, 0);          // very start of the paragraph
+
+  try {
+    r.setEnd(node, offset);   // up to the caret
+  } catch (_) {
+    /* out‑of‑bounds?  fall back to the end of the paragraph */
+    r.selectNodeContents(el);
+    r.collapse(false);
+  }
+
+  return r.toString().length; // exact number of visible characters
+}
+
+/* does the current selection cross two different .editable blocks? */
+function multiParaSelection() {
+  const sel = window.getSelection();
+  if (!sel || sel.rangeCount === 0) return null;
+
+  const range = sel.getRangeAt(0);             // always start ≤ end in document order
+  const startEl = (range.startContainer instanceof Element
+                   ? range.startContainer
+                   : range.startContainer.parentElement)?.closest('.editable[data-id]');
+  const endEl   = (range.endContainer   instanceof Element
+                   ? range.endContainer
+                   : range.endContainer.parentElement)?.closest('.editable[data-id]');
+  if (!startEl || !endEl || startEl === endEl) return null;
+
+  /* parse ids like “p‑2‑5” → {si:2, pj:5}  */
+  const [, si1, pj1] = /p-(\d+)-(\d+)/.exec(startEl.id);
+  const [, si2, pj2] = /p-(\d+)-(\d+)/.exec(endEl.id);
+
+  return {
+    startEl, endEl,
+    si1: +si1, pj1: +pj1,
+    si2: +si2, pj2: +pj2,
+    startOffset: caretOffsetIn(startEl, range.startContainer, range.startOffset),
+    endOffset  : caretOffsetIn(endEl  , range.endContainer  , range.endOffset )
+  };
+}
+
+/* merge/delete selection that spans several paragraphs */
+function handleMultiParaEdit(e, selInfo) {
+  e.preventDefault();                    // stop browser from mangling the DOM
+  syncAllVisibleText();                  // model ← DOM (pre‑edit)
+
+  const {si1, pj1, si2, pj2, startOffset, endOffset} = selInfo;
+  const startPara = screenplay.scenes[si1].paragraphs[pj1];
+  const endPara   = screenplay.scenes[si2].paragraphs[pj2];
+
+  const before = textOf(startPara).slice(0, startOffset);
+  const after  = textOf(endPara  ).slice(endOffset);
+
+  /* what gets inserted instead of the deleted block */
+  const inserted = (e.key === 'Backspace' || e.key === 'Delete') ? ''
+                  : (e.key.length === 1 ? e.key : '');   // printable char only
+
+  /* 1️⃣ Keep only the start paragraph, update its text               */
+  startPara.text_elements = [{ text: before + inserted + after, style: null }];
+
+  const startEl = elementRefs[`p-${si1}-${pj1}`]; 
+  if (startEl) startEl.innerText = before + inserted + after;   // live DOM sync
+
+  /* 2️⃣ Remove everything between start+1 … end (inclusive)          */
+  for (let si = si2; si >= si1; si--) {
+    const scene = screenplay.scenes[si];
+    if (si === si1 && si === si2) {                // same scene
+      scene.paragraphs.splice(pj1 + 1, pj2 - pj1); // remove middle ones
+    } else if (si === si1) {
+      scene.paragraphs.splice(pj1 + 1);            // remove tail of first scene
+    } else if (si === si2) {
+      scene.paragraphs.splice(0, pj2 + 1);         // remove head of last scene
+    } else {
+      scene.paragraphs.splice(0);                  // whole scene disappeared
+    }
+  }
+
+  /* 3️⃣ Trigger re‑render, then put caret right after inserted text  */
+  screenplay = screenplay;
+  tick().then(() => {
+    const el = document.getElementById(`p-${si1}-${pj1}`);
+    if (el) placeCaretAtOffset(el, (before + inserted).length);
+  });
+}
+
 
 </script>
 
