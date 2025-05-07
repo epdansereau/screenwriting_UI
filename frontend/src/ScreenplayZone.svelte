@@ -239,7 +239,8 @@ if (e.key === 'Backspace' && txt !== '') {
 
     /* BACKSPACE on empty */
     if(e.key==='Backspace' && txt===''){
-      if(j===0) return; e.preventDefault();
+      e.preventDefault()
+      if(j===0) return;
       syncAllVisibleText();
       screenplay.scenes[i].paragraphs.splice(j,1); screenplay=screenplay;
       tick().then(()=>placeCaretAtEnd(document.getElementById(`p-${i}-${j-1}`)));
