@@ -114,26 +114,27 @@
   {/if}
 </div>
 
-<!-- ───── DRAG‑AND‑DROP / CLICK UPLOAD ZONE ───────────────────────── -->
-<div class="upload-wrapper {dragActive ? 'drag-active' : ''}"
-     on:click={() => fileInput.click()}
-     on:dragover|preventDefault|stopPropagation={handleDragOver}
-     on:dragleave={handleDragLeave}
-     on:drop|preventDefault|stopPropagation={handleDrop}>
+<!-- ───── MAIN CONTENT CONTAINER (centers the desk) ──────────────── -->
+<div class="main-content">
+  <div class="desk">
+    <div class="upload-wrapper {dragActive ? 'drag-active' : ''}"
+         on:click={() => fileInput.click()}
+         on:dragover|preventDefault|stopPropagation={handleDragOver}
+         on:dragleave={handleDragLeave}
+         on:drop|preventDefault|stopPropagation={handleDrop}>
+      <input  type="file"
+              accept=".fdx,.txt"
+              bind:this={fileInput}
+              on:change={handleFileSelect} />
+      <p><strong>Drop</strong> a <code>.fdx</code> or <code>.txt</code> screenplay here<br>
+         or <strong>click</strong> to choose a file</p>
+    </div>
 
-  <input  type="file"
-          accept=".fdx,.txt"
-          bind:this={fileInput}
-          on:change={handleFileSelect} />
-
-  <p><strong>Drop</strong> a <code>.fdx</code> or <code>.txt</code> screenplay here<br>
-     or <strong>click</strong> to choose a file</p>
+    <ScreenplayZone bind:screenplay bind:this={zoneRef} />
+  </div>
 </div>
 
-<!-- ───── SCREENPLAY EDITOR ZONE ──────────────────────────────────── -->
-<div class="screenplay-area">
-  <ScreenplayZone bind:screenplay bind:this={zoneRef} />
-</div>
+
 
 <style>
   /* layout helpers ----------------------------------------------- */
@@ -161,19 +162,39 @@
   }
 
   /* drag‑and‑drop upload area ------------------------------------ */
-  .upload-wrapper {
-    border:2px dashed #888; border-radius:8px;
-    padding:2rem; text-align:center; color:#555; cursor:pointer;
+    .upload-wrapper {
+    width: 61ch;                     /* match screenplay page width */
+    max-width: 100%;
+    margin: 0 auto 2rem auto;        /* center it horizontally, add space below */
+    border: 2px dashed #888;
+    border-radius: 8px;
+    padding: 2rem;
+    text-align: center;
+    color: #555;
+    cursor: pointer;
+    box-sizing: border-box;
     transition: background 0.2s, border-color 0.2s;
-  }
-  .upload-wrapper.drag-active {
-    background:#f0f8ff; border-color:#1e90ff;
-  }
-  .upload-wrapper input[type="file"] { display:none; }
+    }
+
+    .upload-wrapper.drag-active {
+    background: #f0f8ff;
+    border-color: #1e90ff;
+    }
+
+    .upload-wrapper input[type="file"] {
+    display: none;
+    }
 
   /* screenplay desk area ----------------------------------------- */
   .screenplay-area {
     margin-left:12rem;
     width:calc(100% - 12rem);
   }
+
+    .main-content {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    margin-left: 12rem; /* to leave room for the fixed TOC */
+    }
 </style>

@@ -15,6 +15,9 @@
     });
   }
 
+    export let paddingTop = '3rem';
+    export let paddingBottom = '3rem';
+
   /* ───── INTERNAL STATE ──────────────────────────────────────────── */
   const menuState   = writable({ open:false, sceneIndex:null, paraIndex:null });
   const elementRefs = {};
@@ -476,7 +479,7 @@ function handleMultiParaEdit(e, selInfo) {
 </script>
 
 <!-- ───── DESK + PAGE (single editable host) ─────────────────────── -->
-<div class="desk">
+<div class="desk" style="padding-top: {paddingTop}; padding-bottom: {paddingBottom};">
   <div class="page" contenteditable on:keydown={delegateKeydown} on:paste={delegatePaste}>
     {#if screenplay}
       {#each screenplay.scenes as scene, i}
@@ -519,15 +522,25 @@ function handleMultiParaEdit(e, selInfo) {
 </div>
 
 <style>
-  :root { --paper-bg:#fff; --desk-bg:#d83a3a; }
-  .desk { width:100%; min-height:100vh; background:var(--desk-bg); }
-  .page {
-        width: 61ch;
-        padding: 6rem 7rem;               /* top/bottom = 6rem, sides = 7rem */
-        background: var(--paper-bg);
-        border: 1px solid #ddd;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.15);
-        min-height: calc(1em * 51 + 12rem); /* 51 lines + 6rem top + 6rem bottom */
+  :root { --paper-bg:#fff; --desk-bg:#ccc; }
+    .desk {
+    width: 100%;
+    min-height: 100vh;
+    background: var(--desk-bg);
+    padding-left: 6rem;
+    padding-right: 6rem;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    box-sizing: border-box;
+    }
+    .page {
+    width: 61ch;
+    padding: 6rem 7rem;
+    background: var(--paper-bg);
+    border: 1px solid #ddd;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+    min-height: calc(1em * 51 + 12rem);
     }
   * { font-family:'Courier New',monospace; line-height:1; }
 
