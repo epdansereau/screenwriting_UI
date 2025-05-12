@@ -338,6 +338,15 @@ function delegateKeydown(e){
     const [,si,pj]=/p-(\d+)-(\d+)/.exec(el.id)||[]; if(si==null) return;
     handlePaste(e,+si,+pj, screenplay.scenes[+si].paragraphs[+pj]);
   }
+
+  function delegateInput(e) {
+    const el = currentParaEl();              // helper you already have
+    if (!el) return;
+    const id   = el.dataset.id;
+    const text = el.innerText;
+    updateTextById(id, text);                // ← keeps screenplay in sync
+  }
+
     /* ─── caret & placeholder helpers ─────────────────────────────── */
     function ensureCaretable(el) {
     if (el.childNodes.length === 0) {            // give the div height/caret
@@ -499,7 +508,7 @@ function handleMultiParaEdit(e, selInfo) {
 
 <!-- ───── DESK + PAGE (single editable host) ─────────────────────── -->
 <div class="desk" style="padding-top: {paddingTop}; padding-bottom: {paddingBottom};">
-  <div class="page" contenteditable on:keydown={delegateKeydown} on:paste={delegatePaste}>
+  <div class="page" contenteditable on:keydown={delegateKeydown} on:paste={delegatePaste} on:input={delegateInput}>
     {#if screenplay}
       {#each screenplay.scenes as scene, i}
         <div id={`scene-${i}`} style="margin-bottom:2rem">
