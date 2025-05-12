@@ -1,5 +1,6 @@
 <script>
   import { Screenplay }   from './screenplay.js';
+  import { Paragraph, TextElement } from './screenplay.js';
   import ScreenplayZone   from './ScreenplayZone.svelte';
   import { onMount, tick } from 'svelte';
 
@@ -14,7 +15,7 @@
   function createEmptyScreenplay () {
     const sp = Screenplay.fromPlain('INT. ', { markdown:true });
     // clear heading text so it’s an empty line
-    sp.scenes[0].paragraphs[0].text_elements = [{ text:'', style:null }];
+    sp.scenes[0].paragraphs[0].text_elements = [new TextElement('', null)];
     return sp;
   }
 

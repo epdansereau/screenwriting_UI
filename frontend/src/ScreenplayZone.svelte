@@ -2,6 +2,7 @@
   import { onMount, tick } from 'svelte';
   import { writable, get } from 'svelte/store';
   import { Screenplay }   from './screenplay.js';
+  import { Paragraph, TextElement } from './screenplay.js';
 
   /* ───── PUBLIC PROP (two‑way bound) ─────────────────────────────── */
   export let screenplay = null;
@@ -17,6 +18,9 @@
 
     export let paddingTop = '3rem';
     export let paddingBottom = '3rem';
+
+
+  const makeEmptyPara = (type='Action') => new Paragraph(type, [new TextElement('', null)]);
 
   /* ───── INTERNAL STATE ──────────────────────────────────────────── */
   const menuState   = writable({ open:false, sceneIndex:null, paraIndex:null });
@@ -47,7 +51,7 @@
     for(const sc of screenplay.scenes){
       const para=sc.paragraphs.find(p=>p.id===id);
       if(para && newText!==textOf(para))
-        para.text_elements=[{text:newText,style:null}];
+        para.text_elements=[new TextElement(newText, null)];
     }
   }
 
@@ -56,8 +60,9 @@
       const id=el.dataset.id, text=el.innerText??'';
       for(const sc of screenplay.scenes){
         const para=sc.paragraphs.find(p=>p.id===id);
-        if(para && text!==para.text_elements[0]?.text)
-          para.text_elements[0].text=text;
+        if (para && text !== para.text_elements[0]?.text) {
+          para.text_elements = [new TextElement(text, null)];
+        }
       }
     });
   }
@@ -76,10 +81,11 @@
   async function insertEmptyParagraph(si,pj){
     syncAllVisibleText();
     const sc=screenplay.scenes[si];
-    sc.paragraphs.splice(pj+1,0,{
-      id:generateId(), type:getDefaultType(sc.paragraphs[pj].type),
-      text_elements:[{text:'',style:null}]
-    });
+    {
+      const newP = makeEmptyPara(getDefaultType(sc.paragraphs[pj].type));
+      newP.id    = generateId();
+      sc.paragraphs.splice(pj + 1, 0, newP);
+    }
     screenplay=screenplay;
     await tick();
     const newEl = elementRefs[`p-${si}-${pj+1}`];
@@ -122,14 +128,28 @@
   });
 
   /* ───── PASTE → paragraphsFromLines (unchanged) ────────────────── */
-  function paragraphsFromLines(lines){
-    const tmp=Screenplay.fromPlain(lines.join('\n'),
-      {markdown:true,allowFountain:true,cleanSpacing:false,cleanPaging:false});
-    const out=[];
-    tmp.scenes.forEach(s=>s.paragraphs.forEach(p=>
-      out.push({id:generateId(),type:p.type,
-        text_elements:p.text_elements.map(te=>({text:te.text,style:te.style??null}))})));
-    return out;
+  function paragraphsFromLines(lines) {
+    // 1. Parse the raw lines with the same options you already use
+    const tmp = Screenplay.fromPlain(
+      lines.join('\n'),
+      { markdown: true, allowFountain: true, cleanSpacing: false, cleanPaging: false }
+    );
+
+    // 2. Deep‑copy every parsed paragraph into a fresh Paragraph instance
+    //    and give it a brand‑new id.
+    const out = [];
+    tmp.scenes.forEach(scene => {
+      scene.paragraphs.forEach(p => {
+        const copy = new Paragraph(
+          p.type,
+          p.text_elements.map(te => new TextElement(te.text, te.style ?? null))
+        );
+        copy.id = generateId();
+        out.push(copy);
+      });
+    });
+
+    return out;   // Array<Paragraph>
   }
   function handlePaste(e,si,pj,para){
     const pasted=e.clipboardData?.getData('text/plain')??'';
@@ -138,10 +158,10 @@
     const original=para.text_elements[0]?.text??'', before=original.slice(0,caret),
           after=original.slice(caret);
     const lines=pasted.replace(/\r/g,'').split('\n'); const first=lines.shift();
-    para.text_elements=[{text:before+first,style:null}];
+    para.text_elements = [new TextElement(before + first, null)];
     elementRefs[`p-${si}-${pj}`].innerText=before+first;
     const newParas=lines.length?paragraphsFromLines(lines.map(l=>l.trimEnd())):[];
-    if(after)(newParas.at(-1)??para).text_elements.push({text:after,style:null});
+    if (after) (newParas.at(-1) ?? para).text_elements.push(new TextElement(after, null));
     if(newParas.length){
       screenplay.scenes[si].paragraphs.splice(pj+1,0,...newParas); screenplay=screenplay;
     }
@@ -160,10 +180,11 @@
       if(caret===full.length){insertEmptyParagraph(i,j);return;}
       const before=full.slice(0,caret), after=full.slice(caret);
       syncAllVisibleText();
-      screenplay.scenes[i].paragraphs[j].text_elements=[{text:before,style:null}];
+      screenplay.scenes[i].paragraphs[j].text_elements = [new TextElement(before, null)]
       el.innerText=before;
-      screenplay.scenes[i].paragraphs.splice(j+1,0,{id:generateId(),
-        type:para.type,text_elements:[{text:after,style:null}]});
+      let splitPara = new Paragraph(para.type, [new TextElement(after, null)]);
+      splitPara.id    = generateId();
+      screenplay.scenes[i].paragraphs.splice(j + 1, 0, splitPara);
       screenplay=screenplay;
 tick().then(() => {
   const newEl = document.getElementById(`p-${i}-${j + 1}`);
@@ -181,11 +202,9 @@ if (e.key === 'Tab') {
     screenplay = screenplay;
   } else {
     syncAllVisibleText();
-    screenplay.scenes[i].paragraphs.splice(j + 1, 0, {
-      id: generateId(),
-      type: getTabInsertType(para.type),
-      text_elements: [{ text: '', style: null }]
-    });
+    const newPara = makeEmptyPara(getTabInsertType(para.type));
+    newPara.id    = generateId();
+    screenplay.scenes[i].paragraphs.splice(j + 1, 0, newPara);
     screenplay = screenplay;
 
     tick().then(() => {
@@ -218,7 +237,7 @@ if (e.key === 'Backspace' && txt !== '') {
         prev.text_elements[prev.text_elements.length - 1].style === null) {
       prev.text_elements[prev.text_elements.length - 1].text += curPlain;
     } else {
-      prev.text_elements.push({ text: curPlain, style: null });
+      prev.text_elements.push(new TextElement(curPlain, null));
     }
 
     /* update prev DOM */
@@ -448,7 +467,7 @@ function handleMultiParaEdit(e, selInfo) {
                   : (e.key.length === 1 ? e.key : '');   // printable char only
 
   /* 1️⃣ Keep only the start paragraph, update its text               */
-  startPara.text_elements = [{ text: before + inserted + after, style: null }];
+  startPara.text_elements = [new TextElement(before + inserted + after, null)];
 
   const startEl = elementRefs[`p-${si1}-${pj1}`]; 
   if (startEl) startEl.innerText = before + inserted + after;   // live DOM sync
