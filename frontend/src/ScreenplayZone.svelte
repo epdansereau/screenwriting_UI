@@ -173,13 +173,14 @@ function updateTextById(id, newText, originEl = null) {
       }));
     return out;
   }
-
-  function handlePaste (e, si, pj, para) {
+  /* ───── PASTE handler (now mirrors first‑line edits) ────────────── */
+  function handlePaste(e, si, pj, para) {
     const pasted = e.clipboardData?.getData('text/plain') ?? '';
-    if (!pasted.includes('\n')) return;      // let Svelte handle simple paste
+    if (!pasted.includes('\n')) return;            // let simple paste pass through
     e.preventDefault();
 
-    const caret    = (() => {
+    /* split original paragraph around the caret                       */
+    const caret = (() => {
       const s = window.getSelection();
       return s?.anchorOffset ?? 0;
     })();
@@ -187,29 +188,42 @@ function updateTextById(id, newText, originEl = null) {
     const before   = original.slice(0, caret);
     const after    = original.slice(caret);
 
-    const lines    = pasted.replace(/\r/g,'').split('\n');
-    const first    = lines.shift();
+    /* first line stays in this paragraph ─ others become new Paras    */
+    const lines = pasted.replace(/\r/g, '').split('\n');
+    const first = lines.shift();
 
-    para.text_elements = [ new TextElement(before + first, null) ];
-    elOf(para.id).innerText = before + first;
+    const newFirstText = before + first;
+    para.text_elements = [ new TextElement(newFirstText, null) ];
 
+    /* update DOM in *both* panes immediately                          */
+    const originEl = elOf(para.id);
+    if (originEl) originEl.innerText = newFirstText;
+    mirrorTextToTwins(para.id, newFirstText, originEl);
+
+    /* turn the remaining lines into fresh Paragraph objects           */
     const newParas = lines.length
         ? paragraphsFromLines(lines.map(l => l.trimEnd()))
         : [];
 
-    if (after) (newParas.at(-1) ?? para)
-                 .text_elements.push(new TextElement(after, null));
+    /* append the tail (after‑caret) to the last new paragraph (or this one) */
+    if (after)
+      (newParas.at(-1) ?? para)
+        .text_elements.push(new TextElement(after, null));
 
-    if (newParas.length) {
+    /* splice the new paragraphs into the screenplay model             */
+    if (newParas.length)
       screenplay.scenes[si].paragraphs.splice(pj + 1, 0, ...newParas);
-      screenplay = screenplay;
-    }
 
+    /* 🔔 fire Svelte reactivity so every bound component updates      */
+    screenplay = screenplay;
+
+    /* place caret at the start of the first newly‑created paragraph   */
     tick().then(() => {
       const nextPara = screenplay.scenes[si].paragraphs[pj + 1];
       if (nextPara) placeCaretAtStart(elOf(nextPara.id));
     });
   }
+
 
   /* ───── MAIN EDIT KEYDOWN (id‑independent) ─────────────────────── */
   function handleEditKeydown (e, i, j, para, elOverride = null) {
