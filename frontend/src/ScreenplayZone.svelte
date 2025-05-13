@@ -398,156 +398,223 @@ function handleDropText(e) {
 }
 
 
-  /* ───── MAIN EDIT KEYDOWN (id‑independent) ─────────────────────── */
-  function handleEditKeydown (e, i, j, para, elOverride = null) {
-    const el   = elOverride || e.currentTarget;
-    const full = el.innerText;
-    const txt  = full.trim();
+/* ───── MAIN EDIT KEYDOWN (id‑independent) ─────────────────────── */
+async function handleEditKeydown (e, i, j, para, elOverride = null) {
 
-    /* ——— ENTER ——————————————————————————— */
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      const caret = (() => {
-        const s = window.getSelection();
-        return s?.anchorOffset ?? full.length;
-      })();
+  const el = elOverride || e.currentTarget;
+  const full = el.innerText; // full text content of the current paragraph element
 
-      if (txt === '')                 { toggleMenu(i, j); return; }
-      if (caret === full.length)      { insertEmptyParagraph(i, j); return; }
+  /* ——— ENTER ——————————————————————————— */
+  if (e.key === 'Enter') {
+    // ... (Enter key logic remains unchanged from your original/working version)
+    e.preventDefault();
+    const caret = (() => {
+      const s = window.getSelection();
+      return s?.anchorOffset ?? full.length;
+    })();
+    const txtTrimmed = full.trim(); // Use a different variable name to avoid conflict
 
-      const before = full.slice(0, caret);
-      const after  = full.slice(caret);
+    if (txtTrimmed === '') { toggleMenu(i, j); return; }
+    if (caret === full.length) { insertEmptyParagraph(i, j); return; }
 
+    const before = full.slice(0, caret);
+    const after = full.slice(caret);
+
+    syncAllVisibleText();
+
+    screenplay.scenes[i].paragraphs[j]
+      .text_elements = [ new TextElement(before, null) ];
+    // DOM update for the current element. The reactive update below will handle twins.
+    if (el) el.innerText = before;
+
+
+    const splitPara = new Paragraph(para.type, [ new TextElement(after, null) ]);
+    splitPara.id = generateId();
+    screenplay.scenes[i].paragraphs.splice(j + 1, 0, splitPara);
+    screenplay = screenplay;
+
+    tick().then(() => placeCaretAtStart(elOf(splitPara.id)));
+    return;
+  }
+
+  /* ——— TAB ———————————————————————————— */
+  if (e.key === 'Tab') {
+    // ... (Tab key logic remains unchanged from your original/working version)
+    e.preventDefault();
+    const txtTrimmed = full.trim(); // Use a different variable name
+
+    if (txtTrimmed === '') {
+      para.type = getTabCycleType(para.type);
+      screenplay = screenplay;
+    } else {
       syncAllVisibleText();
-
-      screenplay.scenes[i].paragraphs[j]
-        .text_elements = [ new TextElement(before, null) ];
-      el.innerText = before;
-
-      const splitPara = new Paragraph(para.type, [ new TextElement(after, null) ]);
-      splitPara.id    = generateId();
-      screenplay.scenes[i].paragraphs.splice(j + 1, 0, splitPara);
+      const newPara = makeEmptyPara(getTabInsertType(para.type));
+      newPara.id = generateId();
+      screenplay.scenes[i].paragraphs.splice(j + 1, 0, newPara);
       screenplay = screenplay;
 
-      tick().then(() => placeCaretAtStart(elOf(splitPara.id)));
+      tick().then(() => placeCaretAtStart(elOf(newPara.id)));
+    }
+    return;
+  }
+
+  // ─────────────────── REVISED BACKSPACE LOGIC ───────────────────────
+  if (e.key === 'Backspace') {
+    const currentMultiParaSelection = multiParaSelection();
+
+    if (currentMultiParaSelection) {
+      // If a multi-paragraph selection exists, let delegateBeforeInput handle the deletion.
+      // delegateBeforeInput will call e.preventDefault() and manage the model update.
+      // We simply return here to prevent this handler from interfering.
       return;
     }
 
-    /* ——— TAB ———————————————————————————— */
-    if (e.key === 'Tab') {
-      e.preventDefault();
+    // If not a multi-paragraph selection, proceed with single-paragraph Backspace logic.
+    // This includes collapsed caret at boundaries or range selection within a single paragraph.
+    const txtTrimmed = full.trim(); // Trimmed text for logic checks
+    const sel = window.getSelection();
 
-      if (txt === '') {
-        para.type  = getTabCycleType(para.type);
-        screenplay = screenplay;
-      } else {
-        syncAllVisibleText();
-        const newPara = makeEmptyPara(getTabInsertType(para.type));
-        newPara.id    = generateId();
-        screenplay.scenes[i].paragraphs.splice(j + 1, 0, newPara);
-        screenplay = screenplay;
-
-        tick().then(() => placeCaretAtStart(elOf(newPara.id)));
-      }
-      return;
-    }
-
-    /* ——— BACKSPACE @ start of non‑empty para → merge up ——— */
-    if (e.key === 'Backspace' && txt !== '') {
-      const sel = window.getSelection();
-      if (sel && sel.anchorOffset === 0) {
-        if (j === 0) return;                         // top of scene
-
-        e.preventDefault();
-        syncAllVisibleText();
-
-        const scene = screenplay.scenes[i];
-        const prev  = scene.paragraphs[j - 1];
-        const cur   = scene.paragraphs[j];
-
-        const splitPos = textOf(prev).length;
-        prev.text_elements.push(...cur.text_elements);
-        const prevEl = elOf(prev.id);
-        if (prevEl) prevEl.innerText = renderText(prev);
-
-        scene.paragraphs.splice(j, 1);               // drop current
-        screenplay = screenplay;
-
-        tick().then(() => {
-          const prevElAgain = elOf(prev.id);
-          if (prevElAgain) placeCaretAtOffset(prevElAgain, splitPos);
-        });
+    // CASE 1: Backspace at the start of a non-empty paragraph (collapsed caret) -> Merge with previous
+    // This restores the original behavior.
+    if (txtTrimmed !== '' && sel && sel.isCollapsed && sel.anchorOffset === 0) {
+      if (j === 0) { // Original condition: if it's the first paragraph of the current scene, do not merge.
         return;
       }
-    }
 
-    /* ——— BACKSPACE on completely empty para ——— */
-    if (e.key === 'Backspace' && txt === '') {
       e.preventDefault();
-      if (j === 0) return;
-
-      syncAllVisibleText();
-      screenplay.scenes[i].paragraphs.splice(j, 1);
-      screenplay = screenplay;
-
-      tick().then(() => {
-        const prevPara = screenplay.scenes[i].paragraphs[j - 1];
-        if (prevPara) placeCaretAtEnd(elOf(prevPara.id));
-      });
-      return;
-    }
-
-    /* ——— ARROW navigation ——— */
-    if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
-      const sel  = window.getSelection(); if (!sel.rangeCount) return;
-      const rect = sel.getRangeAt(0).getClientRects()[0]; if (!rect) return;
-      const box  = el.getBoundingClientRect();
-
-      const atFirst = rect.top    - box.top    < 3;
-      const atLast  = box.bottom  - rect.bottom < 3;
-      const caretX  = rect.left;
-
-      const moveCaret = (targetEl, y) => {
-        let pos = null;
-        if (document.caretPositionFromPoint) {
-          const cp = document.caretPositionFromPoint(caretX, y);
-          if (cp) pos = { node:cp.offsetNode, offset:cp.offset };
-        } else if (document.caretRangeFromPoint) {
-          const cr = document.caretRangeFromPoint(caretX, y);
-          if (cr) pos = { node:cr.startContainer, offset:cr.startOffset };
-        }
-        if (!pos) return;
-
-        const r = document.createRange();
-        r.setStart(pos.node, pos.offset);
-        r.collapse(true);
-        sel.removeAllRanges();
-        sel.addRange(r);
-        targetEl.focus();
-      };
+      syncAllVisibleText(); // Sync model before changes
 
       const scene = screenplay.scenes[i];
+      const prevPara = scene.paragraphs[j - 1]; // Previous paragraph in the same scene
+      const currentPara = scene.paragraphs[j];  // The paragraph where backspace was pressed
 
-      if (e.key === 'ArrowUp' && atFirst) {
-        e.preventDefault();
-        const targetPara = j > 0
-          ? scene.paragraphs[j - 1]
-          : i > 0 ? screenplay.scenes[i - 1].paragraphs.at(-1) : null;
-        if (targetPara)
-          moveCaret(elOf(targetPara.id),
-                    elOf(targetPara.id).getBoundingClientRect().bottom - 2);
+      if (!prevPara) return; // Safety check, though j > 0 should ensure prevPara exists.
+
+      const caretPositionInPrev = textOf(prevPara).length;
+
+      // Append text elements from current to previous. Create new TextElement instances for safety.
+      prevPara.text_elements.push(...currentPara.text_elements.map(te => new TextElement(te.text, te.style)));
+      
+      // Update the DOM of the merged-to paragraph directly for immediate visual feedback.
+      // The reactive update screenplay = screenplay will handle other views/twins.
+      const prevParaEl = elOf(prevPara.id);
+      if (prevParaEl) prevParaEl.innerText = renderText(prevPara);
+
+      scene.paragraphs.splice(j, 1); // Remove the current paragraph from the model
+      screenplay = screenplay; // Trigger Svelte reactivity
+
+      tick().then(() => {
+        const focusedEl = elOf(prevPara.id); // Re-fetch element
+        if (focusedEl) placeCaretAtOffset(focusedEl, caretPositionInPrev);
+      });
+      return; // Action handled
+    }
+
+    // CASE 2: Backspace in a completely empty paragraph (collapsed caret) -> Delete this paragraph
+    // This restores the original behavior.
+    if (txtTrimmed === '' && sel && sel.isCollapsed) { // Caret is implicitly at offset 0 in an empty paragraph
+      if (j === 0) { // Original condition: if it's the first paragraph of the current scene, do not delete.
+        return;
       }
-      if (e.key === 'ArrowDown' && atLast) {
-        e.preventDefault();
-        const targetPara = j < scene.paragraphs.length - 1
-          ? scene.paragraphs[j + 1]
-          : i < screenplay.scenes.length - 1 ? screenplay.scenes[i + 1].paragraphs[0] : null;
-        if (targetPara)
-          moveCaret(elOf(targetPara.id),
-                    elOf(targetPara.id).getBoundingClientRect().top + 2);
+      
+      e.preventDefault();
+      syncAllVisibleText(); // Sync model before changes
+
+      const scene = screenplay.scenes[i];
+      const prevParaToFocus = (j > 0) ? scene.paragraphs[j - 1] : null; // Paragraph to focus after deletion
+
+      scene.paragraphs.splice(j, 1); // Delete the empty paragraph
+      screenplay = screenplay; // Trigger Svelte reactivity
+
+      tick().then(() => {
+        if (prevParaToFocus) {
+          const focusEl = elOf(prevParaToFocus.id);
+          if (focusEl) placeCaretAtEnd(focusEl);
+        }
+        // If prevParaToFocus is null (e.g., j was 0, which is guarded against), caret remains where browser puts it or at start.
+      });
+      return; // Action handled
+    }
+
+  }
+  // ───────────────── END OF REVISED BACKSPACE LOGIC ───────────────────
+
+
+  /* ——— ARROW navigation ——— */
+  if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+    // ... (Arrow navigation logic remains unchanged) ...
+    const sel = window.getSelection(); if (!sel.rangeCount) return;
+    const range = sel.getRangeAt(0);
+    // Ensure getClientRects()[0] exists, especially for empty elements or at init
+    const rect = range.getClientRects().length > 0 ? range.getClientRects()[0] : el.getBoundingClientRect(); // Fallback to el's rect
+    if (!rect) return; // Still possible no rect is found
+    const box = el.getBoundingClientRect();
+
+    // Check if el has actual content/size for meaningful top/bottom calculations
+    const elHasSize = box.height > 0 && box.width > 0;
+
+    const atFirst = elHasSize ? (rect.top - box.top < 3) : true; // If no size, assume at edge
+    const atLast = elHasSize ? (box.bottom - rect.bottom < 3) : true; // If no size, assume at edge
+    const caretX = rect.left;
+
+    const moveCaret = (targetEl, yPositionToTry) => {
+      let pos = null;
+      if (document.caretPositionFromPoint) { // Standard
+        const cp = document.caretPositionFromPoint(caretX, yPositionToTry);
+        if (cp) pos = { node: cp.offsetNode, offset: cp.offset };
+      } else if (document.caretRangeFromPoint) { // Safari / old Chrome
+        const cr = document.caretRangeFromPoint(caretX, yPositionToTry);
+        if (cr) pos = { node: cr.startContainer, offset: cr.startOffset };
+      }
+
+      if (pos) {
+        // Check if the resolved node is actually within the targetEl, or a child of it
+        if (!targetEl.contains(pos.node)) {
+            pos = null; // Resolved position is outside the target, fallback
+        }
+      }
+      
+      if (!pos) { // Fallback if caretPositionFromPoint fails or resolves outside target
+        if (e.key === 'ArrowUp') placeCaretAtEnd(targetEl); // Move to end of previous line
+        else placeCaretAtStart(targetEl); // Move to start of next line
+        targetEl.focus(); // Ensure focus is set
+        return;
+      }
+
+      const r = document.createRange();
+      r.setStart(pos.node, pos.offset);
+      r.collapse(true);
+      const currentSel = window.getSelection(); // Use a different variable name for selection
+      currentSel.removeAllRanges();
+      currentSel.addRange(r);
+      targetEl.focus(); // Ensure focus is set
+    };
+
+    const scene = screenplay.scenes[i];
+
+    if (e.key === 'ArrowUp' && atFirst) {
+      e.preventDefault();
+      const targetPara = j > 0
+        ? scene.paragraphs[j - 1]
+        : i > 0 ? screenplay.scenes[i - 1].paragraphs.at(-1) : null;
+      if (targetPara) {
+        const targetParaEl = elOf(targetPara.id);
+        if (targetParaEl) moveCaret(targetParaEl, targetParaEl.getBoundingClientRect().bottom - 2);
+      }
+    }
+    if (e.key === 'ArrowDown' && atLast) {
+      e.preventDefault();
+      const targetPara = j < scene.paragraphs.length - 1
+        ? scene.paragraphs[j + 1]
+        : i < screenplay.scenes.length - 1 ? screenplay.scenes[i + 1].paragraphs[0] : null;
+      if (targetPara) {
+        const targetParaEl = elOf(targetPara.id);
+        if (targetParaEl) moveCaret(targetParaEl, targetParaEl.getBoundingClientRect().top + 2);
       }
     }
   }
+}
+
 
   /* ───── PAGE‑LEVEL DELEGATION (dataset‑driven) ─────────────────── */
   const currentParaEl = () => {
@@ -572,6 +639,33 @@ function handleDropText(e) {
     const el = currentParaEl();          if (!el) return;
     updateTextById(el.dataset.id, el.innerText, el);
   }
+
+/* intercept native editing on multi‑para selection */
+function delegateBeforeInput(e) {
+  const selInfo = multiParaSelection();
+  if (!selInfo) return;                        // single paragraph – keep native
+
+  const delTypes = ['deleteContentBackward', 'deleteContentForward',
+                    'deleteByCut', 'deleteByDrag'];
+  const insertTypes = ['insertText', 'insertCompositionText'];
+
+  /* Deletion ----------------------------------------------------- */
+  if (delTypes.includes(e.inputType)) {
+    e.preventDefault();                        // cancel browser action
+    handleMultiParaEdit({ key: 'Delete', preventDefault() {} }, selInfo);
+    return;
+  }
+
+  /* Typing (replace selection) ---------------------------------- */
+  if (insertTypes.includes(e.inputType) && e.data?.length === 1) {
+    e.preventDefault();
+    /* fake event with the typed character in e.key                */
+    handleMultiParaEdit({ key: e.data, preventDefault() {} }, selInfo);
+    return;
+  }
+
+  /* Anything else (insert line break, paste, etc.) handled elsewhere */
+}
 
 /* ─── caret helpers ─────────────────────────────────────────────── */
 function ensureCaretable(el) {
@@ -677,7 +771,8 @@ function handleMultiParaEdit(e, selInfo) {
   /* what gets inserted instead of the deleted block */
   const inserted = (e.key === 'Backspace' || e.key === 'Delete')
                    ? ''
-                   : (e.key.length === 1 ? e.key : '');
+                   : (e.key.length === 1 ? e.key
+                                         : (e.data?.length === 1 ? e.data : ''));
 
   const newText = before + inserted + after;
 
@@ -716,6 +811,7 @@ function handleMultiParaEdit(e, selInfo) {
     class="page"
     contenteditable
     on:keydown={delegateKeydown}
+    on:beforeinput={delegateBeforeInput}
     on:paste={delegatePaste}
     on:input={delegateInput}
     on:dragstart={handleDragStartText}
