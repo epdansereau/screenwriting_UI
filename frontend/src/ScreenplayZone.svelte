@@ -30,6 +30,13 @@
     });
   }
 
+  /* push new text to every element that represents the same paragraph id */
+  function mirrorTextToTwins(id, newText, originEl) {
+    document.querySelectorAll(`.editable[data-id="${id}"]`).forEach(el => {
+      if (el !== originEl && el.innerText !== newText) el.innerText = newText;
+    });
+  }
+
   const makeEmptyPara = (type='Action') =>
     new Paragraph(type, [new TextElement('', null)]);
 
@@ -58,13 +65,24 @@
   const textOf = para => (para.text_elements ?? [])
                          .map(te => te.text).join('');
 
-  function updateTextById (id, txt) {
-    for (const sc of screenplay.scenes) {
-      const para = sc.paragraphs.find(p => p.id === id);
-      if (para && txt !== textOf(para))
-        para.text_elements = [new TextElement(txt, null)];
+function updateTextById(id, newText, originEl = null) {
+  let changed = false;
+  for (const sc of screenplay.scenes) {
+    const para = sc.paragraphs.find(p => p.id === id);
+    if (para && newText !== textOf(para)) {
+      para.text_elements = [new TextElement(newText, null)];
+      changed = true;
+      break;
     }
   }
+  if (changed) {
+    /* update the twins right away */
+    mirrorTextToTwins(id, newText, originEl);
+
+    /* notify parent so every bound component re‑runs its reactive blocks */
+    screenplay = screenplay;
+  }
+}
 
   function syncAllVisibleText () {
     document.querySelectorAll('.editable[data-id]').forEach(el => {
@@ -365,7 +383,7 @@
   }
   function delegateInput (e) {
     const el = currentParaEl();          if (!el) return;
-    updateTextById(el.dataset.id, el.innerText);
+    updateTextById(el.dataset.id, el.innerText, el);
   }
 
 /* ─── caret helpers ─────────────────────────────────────────────── */
