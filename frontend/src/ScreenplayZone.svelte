@@ -224,6 +224,179 @@ function updateTextById(id, newText, originEl = null) {
     });
   }
 
+/* ─── drag‑move / copy of ANY selection ─────────────────────────── */
+
+/* ─── caret position at x,y  (cross‑browser) ────────────────────── */
+function getCaretPosFromXY(x, y) {
+  if (document.caretPositionFromPoint) {
+    const cp = document.caretPositionFromPoint(x, y);
+    return cp ? { node: cp.offsetNode, offset: cp.offset } : null;
+  }
+  if (document.caretRangeFromPoint) {               /* Safari / old Chrome */
+    const cr = document.caretRangeFromPoint(x, y);
+    return cr ? { node: cr.startContainer, offset: cr.startOffset } : null;
+  }
+  return null;                                      /* unsupported browser */
+}
+
+let dragInfo = null;   // holds full details of the selection being dragged
+let dragCopy = false;  // true when Ctrl/⌘ held at drag‑start
+
+function buildDragInfo() {
+  const sel = window.getSelection();
+  if (!sel || sel.rangeCount === 0 || sel.isCollapsed) return null;
+
+  const range   = sel.getRangeAt(0);
+  const startEl = (range.startContainer instanceof Element
+                   ? range.startContainer
+                   : range.startContainer.parentElement)?.closest('.editable[data-id]');
+  const endEl   = (range.endContainer   instanceof Element
+                   ? range.endContainer
+                   : range.endContainer.parentElement)?.closest('.editable[data-id]');
+  if (!startEl || !endEl) return null;
+
+  /* paragraph coordinates */
+  const si1 = +startEl.dataset.si, pj1 = +startEl.dataset.pj;
+  const si2 = +endEl.dataset.si,   pj2 = +endEl.dataset.pj;
+
+  return {
+    si1, pj1, si2, pj2,
+    startOffset: caretOffsetIn(startEl, range.startContainer, range.startOffset),
+    endOffset  : caretOffsetIn(endEl,   range.endContainer,   range.endOffset ),
+    startEl,
+    endEl,
+    text: sel.toString()
+  };
+}
+
+/* ——— DRAG START ——————————————————————————————— */
+function handleDragStartText(e) {
+  dragInfo = buildDragInfo();
+  if (!dragInfo) {              // nothing we control → let browser be
+    dragInfo = null;
+    return;
+  }
+  dragCopy  = e.ctrlKey || e.metaKey;
+  e.dataTransfer.effectAllowed = dragCopy ? 'copyMove' : 'move';
+  /* put text on the clipboard for external drops */
+  e.dataTransfer.setData('text/plain', dragInfo.text);
+}
+
+/* ——— DRAG OVER ——————————————————————————————— */
+function handleDragOverText(e) {
+  if (!dragInfo) return;        // browser handles its own drags
+  e.preventDefault();           // allow drop
+  e.dataTransfer.dropEffect = dragCopy ? 'copy' : 'move';
+}
+/* ─── DROP — works for any selection size, keeps indices correct ── */
+function handleDropText(e) {
+  if (!dragInfo) return;          // not our drag
+  e.preventDefault();
+
+  /* ── locate drop site before we mutate the model ─────────────── */
+  const tgtEl = e.target.closest('.editable[data-id]');
+  if (!tgtEl) { dragInfo = null; return; }
+
+  const tgtParaId  = tgtEl.dataset.id;         // stable reference!
+  const caretPos   = getCaretPosFromXY(e.clientX, e.clientY);
+  if (!caretPos) { dragInfo = null; return; }
+  let dropOffset = caretOffsetIn(tgtEl, caretPos.node, caretPos.offset);
+
+  /* abort if move‑into‑own‑selection */
+  if (!dragCopy &&
+      tgtParaId === dragInfo.startEl.dataset.id &&
+      dropOffset >= dragInfo.startOffset && dropOffset <= dragInfo.endOffset) {
+    dragInfo = null; return;
+  }
+
+  /* ── collect dragged lines exactly as before ─────────────────── */
+  const lines = [];
+  const push  = txt => { if (txt) lines.push(txt); };
+
+  const firstPara = screenplay.scenes[dragInfo.si1].paragraphs[dragInfo.pj1];
+  const lastPara  = screenplay.scenes[dragInfo.si2].paragraphs[dragInfo.pj2];
+
+  push(textOf(firstPara).slice(dragInfo.startOffset,
+        dragInfo.si1 === dragInfo.si2 && dragInfo.pj1 === dragInfo.pj2
+          ? dragInfo.endOffset : undefined));
+
+  for (let si = dragInfo.si1; si <= dragInfo.si2; si++) {
+    const scene = screenplay.scenes[si];
+    const s = si === dragInfo.si1 ? dragInfo.pj1 + 1 : 0;
+    const e = si === dragInfo.si2 ? dragInfo.pj2 - 1 : scene.paragraphs.length - 1;
+    for (let pj = s; pj <= e; pj++) push(textOf(scene.paragraphs[pj]));
+  }
+
+  if (!(dragInfo.si1 === dragInfo.si2 && dragInfo.pj1 === dragInfo.pj2))
+    push(textOf(lastPara).slice(0, dragInfo.endOffset));
+
+  const draggedLen = lines.join('').length;
+
+  /* ── delete original selection if move ───────────────────────── */
+  if (!dragCopy) {
+    if (dragInfo.si1 === dragInfo.si2 && dragInfo.pj1 === dragInfo.pj2) {
+      const para   = firstPara;
+      const raw    = textOf(para);
+      const before = raw.slice(0, dragInfo.startOffset);
+      const after  = raw.slice(dragInfo.endOffset);
+      para.text_elements = [new TextElement(before + after, null)];
+      mirrorTextToTwins(para.id, before + after, null);
+
+      /* if we deleted earlier text in same paragraph, adjust offset */
+      if (tgtParaId === para.id && dropOffset > dragInfo.startOffset)
+        dropOffset -= draggedLen;
+    } else {
+      handleMultiParaEdit({ preventDefault() {}, key:'Delete' }, dragInfo);
+    }
+  }
+
+  /* ── (re)locate target paragraph after possible deletions ────── */
+  const tgtScene = screenplay.scenes
+                   .find(sc => sc.paragraphs.some(p => p.id === tgtParaId));
+  const tgtParaIdx = tgtScene.paragraphs.findIndex(p => p.id === tgtParaId);
+  const tgtPara    = tgtScene.paragraphs[tgtParaIdx];
+
+  const rawTgt   = textOf(tgtPara);
+  const beforeT  = rawTgt.slice(0, dropOffset);
+  const afterT   = rawTgt.slice(dropOffset);
+
+  /* ── insert dragged text ─────────────────────────────────────── */
+  tgtPara.text_elements = [ new TextElement(beforeT + lines[0], null) ];
+
+  /* if only one line, add tail in same paragraph */
+  if (lines.length === 1) {
+    tgtPara.text_elements.push(new TextElement(afterT, null));
+  }
+
+  mirrorTextToTwins(tgtPara.id, textOf(tgtPara), null);  // full text now
+
+  /* extra lines → new paragraphs inserted right after target para */
+  if (lines.length > 1) {
+    const newParas = lines.slice(1).map(txt => {
+      const p = new Paragraph(tgtPara.type, [ new TextElement(txt, null) ]);
+      p.id = generateId();
+      return p;
+    });
+    newParas.at(-1).text_elements.push(new TextElement(afterT, null));
+
+    tgtScene.paragraphs.splice(tgtParaIdx + 1, 0, ...newParas);
+  }
+
+  /* ── reactive update + caret placement ───────────────────────── */
+  screenplay = screenplay;    // 🔔 mirror pane updates
+
+  tick().then(() => {
+    const caretParaId = lines.length > 1
+        ? tgtScene.paragraphs[tgtParaIdx + lines.length - 1].id
+        : tgtPara.id;
+    placeCaretAtOffset(elOf(caretParaId),
+      lines.length > 1 ? lines.at(-1).length
+                       : (beforeT + lines[0]).length);
+  });
+
+  dragInfo = null;
+}
+
 
   /* ───── MAIN EDIT KEYDOWN (id‑independent) ─────────────────────── */
   function handleEditKeydown (e, i, j, para, elOverride = null) {
@@ -532,8 +705,16 @@ function handleMultiParaEdit(e, s) {
 
 <!-- ───── DESK + PAGE (single editable host) ─────────────────────── -->
 <div class="desk" style="padding-top: {paddingTop}; padding-bottom: {paddingBottom};">
-  <div class="page" contenteditable on:keydown={delegateKeydown} on:paste={delegatePaste} on:input={delegateInput}>
-    {#if screenplay}
+  <div
+    class="page"
+    contenteditable
+    on:keydown={delegateKeydown}
+    on:paste={delegatePaste}
+    on:input={delegateInput}
+    on:dragstart={handleDragStartText}
+    on:dragover|preventDefault={handleDragOverText}
+    on:drop={handleDropText}>
+      {#if screenplay}
       {#each screenplay.scenes as scene, i}
         <div id={`scene-${i}`} style="margin-bottom:2rem">
           {#each scene.paragraphs as para, j (para.id || (para.id = generateId()))}
