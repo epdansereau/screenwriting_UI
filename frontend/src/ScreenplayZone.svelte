@@ -662,24 +662,31 @@ function multiParaSelection() {
 }
 
 /* merge / replace text across a multi‑para selection */
-function handleMultiParaEdit(e, s) {
-  e.preventDefault();          // keep DOM intact
-  syncAllVisibleText();        // model ← DOM
+/* merge/delete selection that spans several paragraphs */
+function handleMultiParaEdit(e, selInfo) {
+  e.preventDefault();                 // stop browser from mangling the DOM
+  syncAllVisibleText();               // model ← DOM (pre‑edit)
 
-  const {si1, pj1, si2, pj2, startOffset, endOffset} = s;
+  const {si1, pj1, si2, pj2, startOffset, endOffset} = selInfo;
   const startPara = screenplay.scenes[si1].paragraphs[pj1];
   const endPara   = screenplay.scenes[si2].paragraphs[pj2];
 
   const before = textOf(startPara).slice(0, startOffset);
   const after  = textOf(endPara  ).slice(endOffset);
 
+  /* what gets inserted instead of the deleted block */
   const inserted = (e.key === 'Backspace' || e.key === 'Delete')
                    ? ''
                    : (e.key.length === 1 ? e.key : '');
 
-  /* 1️⃣ update first paragraph’s text */
-  startPara.text_elements = [ new TextElement(before + inserted + after, null) ];
-  elOf(startPara.id).innerText = before + inserted + after;
+  const newText = before + inserted + after;
+
+  /* 1️⃣ Keep only the start paragraph, update its text             */
+  startPara.text_elements = [ new TextElement(newText, null) ];
+
+  const startEl = elOf(startPara.id);          // helper that finds ANY pane
+  if (startEl) startEl.innerText = newText;    // update active editor
+  mirrorTextToTwins(startPara.id, newText, startEl); // 🔔 mirror pane too
 
   /* 2️⃣ delete everything between start+1 … end (inclusive) */
   for (let si = si2; si >= si1; si--) {
